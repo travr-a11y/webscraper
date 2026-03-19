@@ -1,0 +1,12 @@
+node_modules
+.env
+.git
+.gitignore
+tests
+output
+coverage
+*.log
+.DS_Store
+.playwright
+README.md
+docker-compose.yml
