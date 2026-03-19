@@ -32,13 +32,13 @@ if (s3Set.length > 0 && s3Set.length < 4) {
   throw new Error(`Partial S3 config: missing ${missing.join(', ')}. Set all 4 S3 vars or none.`);
 }
 
-// Fail fast in production if required vars are missing
+// Warn about missing vars in production (don't crash — health check must still work)
 if (config.nodeEnv === 'production') {
   if (!config.apiKey) {
-    throw new Error('API_KEY is required in production');
+    console.error('WARNING: API_KEY is not set — all authenticated endpoints will return 401');
   }
   if (!config.redisUrl) {
-    throw new Error('REDIS_URL is required in production');
+    console.error('WARNING: REDIS_URL is not set — job queue and worker are disabled');
   }
 }
 
