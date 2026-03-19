@@ -1,3 +1,6 @@
+// Early logging before any heavy requires — helps diagnose silent crashes on Railway
+console.log(`[startup] pid=${process.pid} node=${process.version} PORT=${process.env.PORT || '(not set)'}`);
+
 const express = require('express');
 const config = require('./config');
 const logger = require('./logger');
@@ -8,6 +11,8 @@ const { startWorker, stopWorker } = require('./queue/scrapeWorker');
 const { closeQueue, getScrapeQueue } = require('./queue/scrapeQueue');
 const { closeConnection } = require('./queue/connection');
 const { closeBrowser } = require('./scraper/browser');
+
+console.log('[startup] all modules loaded');
 
 const app = express();
 
@@ -43,7 +48,7 @@ app.use((err, req, res, next) => {
 });
 
 // Start server
-const server = app.listen(config.port, () => {
+const server = app.listen(config.port, '0.0.0.0', () => {
   logger.info(`Server running on port ${config.port}`);
 });
 
