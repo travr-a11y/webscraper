@@ -2,15 +2,25 @@
 console.log(`[startup] pid=${process.pid} node=${process.version} PORT=${process.env.PORT || '(not set)'}`);
 
 const express = require('express');
-const config = require('./config');
+
+let config;
+try {
+  config = require('./config');
+} catch (err) {
+  console.error('[startup] FATAL: invalid configuration — HTTP server will not start');
+  console.error(`[startup] ${err.message}`);
+  process.exit(1);
+}
+
 const logger = require('./logger');
 const authMiddleware = require('./middleware/auth');
 const apiLimiter = require('./middleware/rateLimit');
 const scrapeRoutes = require('./routes/scrape');
 const { startWorker, stopWorker } = require('./queue/scrapeWorker');
-const { closeQueue, getScrapeQueue } = require('./queue/scrapeQueue');
+const { closeQueue } = require('./queue/scrapeQueue');
 const { closeConnection } = require('./queue/connection');
 const { closeBrowser } = require('./scraper/browser');
+const { getReadinessState } = require('./health/readiness');
 
 console.log('[startup] all modules loaded');
 
@@ -18,18 +28,26 @@ const app = express();
 
 app.use(express.json());
 
-// Health check (no auth required)
-app.get('/api/health', async (req, res) => {
+// Liveness: no Redis/queue — Railway healthcheck must always get a fast 200 when process is up
+app.get('/api/health', (req, res) => {
+  res.json({ status: 'ok', service: 'webscraper' });
+});
+
+// Readiness: Redis + queue with bounded timeouts (see READY_CHECK_TIMEOUT_MS)
+app.get('/api/ready', async (req, res) => {
   try {
-    const queue = getScrapeQueue();
-    const [waiting, active] = await Promise.all([
-      queue.getWaitingCount(),
-      queue.getActiveCount(),
-    ]);
-    res.json({ status: 'ok', queue: { waiting, active } });
+    const body = await getReadinessState();
+    if (body.ready) {
+      return res.status(200).json(body);
+    }
+    return res.status(503).json(body);
   } catch (err) {
-    // If Redis isn't connected, still return a basic health check
-    res.json({ status: 'ok', queue: { waiting: 0, active: 0, note: 'Redis not connected' } });
+    logger.error(`Readiness check error: ${err.message}`);
+    return res.status(503).json({
+      ready: false,
+      reason: err.message,
+      redis: { ok: false, error: err.message },
+    });
   }
 });
 
@@ -47,18 +65,7 @@ app.use((err, req, res, next) => {
   res.status(500).json({ success: false, error: 'Internal server error' });
 });
 
-// Start server
-const server = app.listen(config.port, '0.0.0.0', () => {
-  logger.info(`Server running on port ${config.port}`);
-});
-
-// Start worker (only if Redis is configured)
-if (config.redisUrl) {
-  startWorker();
-}
-
-// Graceful shutdown
-async function shutdown(signal) {
+async function shutdown(server, signal) {
   logger.info(`${signal} received, shutting down gracefully...`);
 
   server.close(() => {
@@ -78,12 +85,21 @@ async function shutdown(signal) {
   process.exit(0);
 }
 
-process.on('SIGTERM', () => shutdown('SIGTERM'));
-process.on('SIGINT', () => shutdown('SIGINT'));
+if (require.main === module) {
+  const server = app.listen(config.port, '0.0.0.0', () => {
+    logger.info({ port: config.port, bind: '0.0.0.0' }, 'HTTP server listening (liveness: GET /api/health)');
+  });
 
-// Catch unhandled rejections
-process.on('unhandledRejection', (reason) => {
-  logger.error(`Unhandled rejection: ${reason}`);
-});
+  if (config.redisUrl) {
+    startWorker();
+  }
+
+  process.on('SIGTERM', () => shutdown(server, 'SIGTERM'));
+  process.on('SIGINT', () => shutdown(server, 'SIGINT'));
+
+  process.on('unhandledRejection', (reason) => {
+    logger.error(`Unhandled rejection: ${reason}`);
+  });
+}
 
 module.exports = app;

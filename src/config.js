@@ -29,7 +29,11 @@ const s3Vars = ['endpoint', 'bucket', 'accessKey', 'secretKey'];
 const s3Set = s3Vars.filter(k => config.s3[k]);
 if (s3Set.length > 0 && s3Set.length < 4) {
   const missing = s3Vars.filter(k => !config.s3[k]);
-  throw new Error(`Partial S3 config: missing ${missing.join(', ')}. Set all 4 S3 vars or none.`);
+  const msg =
+    `[config] Partial S3 configuration: some S3_* variables are set (${s3Set.join(', ')}) ` +
+    `but missing: ${missing.join(', ')}. Set all four (S3_ENDPOINT, S3_BUCKET, S3_ACCESS_KEY, S3_SECRET_KEY) or leave all empty.`;
+  console.error(msg);
+  throw new Error(msg);
 }
 
 // Warn about missing vars in production (don't crash — health check must still work)
