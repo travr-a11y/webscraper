@@ -16,9 +16,6 @@ const logger = require('./logger');
 const authMiddleware = require('./middleware/auth');
 const apiLimiter = require('./middleware/rateLimit');
 const scrapeRoutes = require('./routes/scrape');
-const { startWorker, stopWorker } = require('./queue/scrapeWorker');
-const { closeQueue } = require('./queue/scrapeQueue');
-const { closeConnection } = require('./queue/connection');
 const { closeBrowser } = require('./scraper/browser');
 const { getReadinessState } = require('./health/readiness');
 
@@ -28,12 +25,12 @@ const app = express();
 
 app.use(express.json());
 
-// Liveness: no Redis/queue — Railway healthcheck must always get a fast 200 when process is up
+// Liveness: Railway healthcheck must always get a fast 200 when process is up
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', service: 'webscraper' });
 });
 
-// Readiness: Redis + queue with bounded timeouts (see READY_CHECK_TIMEOUT_MS)
+// Readiness: process accepts traffic (no external deps required)
 app.get('/api/ready', async (req, res) => {
   try {
     const body = await getReadinessState();
@@ -46,7 +43,6 @@ app.get('/api/ready', async (req, res) => {
     return res.status(503).json({
       ready: false,
       reason: err.message,
-      redis: { ok: false, error: err.message },
     });
   }
 });
@@ -73,10 +69,7 @@ async function shutdown(server, signal) {
   });
 
   try {
-    await stopWorker();
-    await closeQueue();
     await closeBrowser();
-    await closeConnection();
     logger.info('All resources cleaned up');
   } catch (err) {
     logger.error(`Shutdown error: ${err.message}`);
@@ -89,10 +82,6 @@ if (require.main === module) {
   const server = app.listen(config.port, '0.0.0.0', () => {
     logger.info({ port: config.port, bind: '0.0.0.0' }, 'HTTP server listening (liveness: GET /api/health)');
   });
-
-  if (config.redisUrl) {
-    startWorker();
-  }
 
   process.on('SIGTERM', () => shutdown(server, 'SIGTERM'));
   process.on('SIGINT', () => shutdown(server, 'SIGINT'));
